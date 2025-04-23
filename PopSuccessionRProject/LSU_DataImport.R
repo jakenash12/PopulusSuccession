@@ -82,8 +82,20 @@ seq_depth=
 
 #decided on a rarefaction depth of 816
 #samples with less seqs than that are discarded
-set.seed(67)
 raredepth=816
+
+
+#Generates rarefaction curves
+RareCurve_ITS=
+  otu_mat %>%
+  t %>%
+  rarecurve(step=100, tidy=TRUE)
+ggplot(RareCurve_ITS, aes(x=Sample, y =Species, group=Site)) +
+  geom_line() +
+  geom_vline(xintercept=raredepth)
+
+#rarefies samples to selected rarefaction depth
+set.seed(67)
 otu_mat_rare=
   otu_mat %>%
   t %>%

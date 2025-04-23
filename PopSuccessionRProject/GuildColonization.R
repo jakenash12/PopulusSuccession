@@ -15,7 +15,7 @@ Input_path="./InputFiles/"
 #reads in microscopic fungal colonization data
 Colonization_df= read.delim(paste(Input_path, "FungalColonization.txt", sep=""))
 
-#calcualates guild colonization per sample
+#calcualates guild colonization from sequence abundance per sample
 #in long format
 GuildSumm=
   otu_mat_rare_rel %>%
@@ -86,15 +86,15 @@ Colonization_bysample=
   filter(Stand!="Control") %>%
   rename("Ectomycorrhizal"="ECM",
          "Arbuscular Mycorrhizal"="AM") %>%
-  mutate(TotalEndophyte=Endophyte+Microsclerotia,
+  mutate(TotalEndophyte=Endophyte,
          SpeciesTime=paste(Species, Time, sep="_"))
   
 Colonization_means=
-  Colonization_bysample %>%
+  Colonization_bysample %>% 
+  filter(!is.na(Uncolonized)) %>% View
   select(-c("Microsclerotia","Endophyte","Stand", "SpeciesTime")) %>% 
-  gather("primary_guild","abundance", -Species, -Time, -SampleID) %>%
-  filter(!is.na(abundance)) %>%
-  group_by(Species,Time, primary_guild) %>%
+  gather("primary_guild","abundance", -Species, -Time, -SampleID) %>% View
+  group_by(Species,Time, primary_guild) %>% 
   summarise(abundance=mean(abundance)) %>%
   select(Time,Species,primary_guild,abundance) %>%
   mutate(Method="Microscopy",
