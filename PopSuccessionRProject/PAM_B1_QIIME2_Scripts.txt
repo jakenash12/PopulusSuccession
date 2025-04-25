@@ -1,0 +1,269 @@
+WD_path=/anvil/scratch/x-jnash12/PAMB1
+mkdir ${WD_path}
+cd ${WD_path}
+
+#downloads datasets for the the 2 sampling timepoints
+#../nash_6832b/ is the sequencing folder name for the June 2020 timepoint (T1) and Nash_20210519 
+#is the sequencing folder name for the January 2021 timepoint (T2)
+#####################################################################################################
+#!/bin/bash
+#SBATCH -o slurm-%j-DataDL.out
+#SBATCH -c 1
+#SBATCH --partition=shared 
+#SBATCH -A BIO230020
+#SBATCH --export=ALL
+#SBATCH -t 2:00:00
+
+WD_path=/anvil/scratch/x-jnash12/PAMB1
+rclone copy "remote:/Vilgalys Lab/NGS_RAW/Nash_20210519/Demultiplex_Job_2487" ${WD_path}/Nash_20210519
+rclone copy "remote:/Vilgalys Lab/NGS_RAW/nash_6832b/Demultiplexed" ${WD_path}/nash_6832b
+#####################################################################################################
+
+#!/bin/bash
+#SBATCH -o slurm-%j-BAMtofastq.out
+#SBATCH -c 1
+#SBATCH --partition=shared 
+#SBATCH -A BIO230020
+#SBATCH --export=ALL
+#SBATCH -t 24:00:00
+
+WD_path=/anvil/scratch/x-jnash12/PAMB1
+
+#converts bam files to fastq
+for i in $(ls ${WD_path}/Nash_20210519/*.bam)
+do
+	name=$(basename "$i" .bam)
+	echo $name
+	samtools bam2fq ${WD_path}/Nash_20210519/${name}.bam > ${WD_path}/Nash_20210519/${name}.fastq
+done
+
+for i in $(ls ${WD_path}/nash_6832b/*.bam)
+do
+	name=$(basename "$i" .bam)
+	echo $name
+	samtools bam2fq ${WD_path}/nash_6832b/${name}.bam > ${WD_path}/nash_6832b/${name}.fastq
+done
+
+######################################################################
+
+#generates readcounts for the fastq files
+count_reads() {
+    dir=$1
+    output_file="${dir}/readcount"
+
+    # Ensure the directory exists
+    if [ -d "$dir" ]; then
+        > "$output_file"  # Clear file if it exists
+        for file in "$dir"/*.fastq; do
+            if [ -f "$file" ]; then
+                count=$(wc -l < "$file")
+                reads=$((count / 4))  # Each read has 4 lines in FASTQ format
+                echo "$(basename "$file") $reads" >> "$output_file"
+            fi
+        done
+    else
+        echo "Directory $dir does not exist."
+    fi
+}
+
+count_reads "${WD_path}/Nash_20210519/"
+count_reads "${WD_path}/nash_6832b/"
+
+#filelists were manually generated from an old excel sheet with the filenames for the two sampling points
+#edits the format of the list to match that of the filenames
+sed -E 's/_/./; s/_/--/' June20FileList > June20FileList_modified
+sed -E 's/_/./; s/_/--/' Jan21FileList > Jan21FileList_modified
+
+#generates QIIME2 manifest
+printf "%s\t%s\n" "sample-id" "absolute-filepath" > ${WD_path}/QIIMEManifest.tsv
+#first prints June 2020 samples into manifest
+for i in $(cat ${WD_path}/June20FileList_modified)
+do
+printf "%s\t%s\n" "${i}" "${WD_path}/nash_6832b/${i}.fastq" >> ${WD_path}/QIIMEManifest.tsv
+done
+#then prints January 2021 samples into manifest
+for i in $(cat ${WD_path}/Jan21FileList_modified)
+do
+printf "%s\t%s\n" "${i}" "${WD_path}/Nash_20210519/${i}.fastq" >> ${WD_path}/QIIMEManifest.tsv
+done
+
+#edits manifest to remove samples with low sequencing depth that seem to be causing problems in dada2
+grep -v -E 'demultiplex\.bc1069--bc1069|demultiplex\.bc1031--bc1031' "${WD_path}/QIIMEManifest.tsv" > temp_file && mv temp_file "${WD_path}/QIIMEManifest.tsv"
+
+#Imports LSU Pacbio data using QIIME manifest
+########################################################################
+#!/bin/bash
+#SBATCH -o slurm-%j-QIIME_Import.out
+#SBATCH -c 1
+#SBATCH --partition=shared 
+#SBATCH -A BIO230020
+#SBATCH --export=ALL
+#SBATCH -t 4:00:00
+
+module load biocontainers
+module load qiime2
+WD_path=/anvil/scratch/x-jnash12/PAMB1
+
+qiime tools import \
+  --type 'SampleData[SequencesWithQuality]' \
+  --input-path ${WD_path}/QIIMEManifest.tsv \
+  --output-path ${WD_path}/LSU_demux.qza \
+  --input-format SingleEndFastqManifestPhred33V2
+
+qiime demux summarize \
+  --i-data ${WD_path}/LSU_demux.qza \
+  --o-visualization ${WD_path}/LSU_demux.qzv
+########################################################################
+
+#DADA2 on LSU Pacbio sequeces
+########################################################################
+#!/bin/bash
+#SBATCH -o slurm-%j-dada2.out
+#SBATCH -c 64
+#SBATCH --partition=shared 
+#SBATCH -A BIO230020
+#SBATCH --export=ALL
+#SBATCH -t 48:00:00
+
+module load biocontainers
+module load qiime2
+WD_path=/anvil/scratch/x-jnash12/PAMB1
+
+qiime dada2 denoise-ccs \
+	--i-demultiplexed-seqs ${WD_path}/LSU_demux.qza \
+	--p-front ACCCGCTGAACTTAAGC \
+	--p-adapter TCCTGAGGGAAACTTCG \
+	--p-max-mismatch 2 \
+	--p-min-len 700 \
+	--p-max-len 1600 \
+	--p-n-threads 0 \
+	--o-table ${WD_path}/LSU_dada2_table.qza \
+	--o-representative-sequences ${WD_path}/LSU_dada2_repseqs.qza \
+	--o-denoising-stats ${WD_path}/LSU_dada2_stats.qza \
+	--verbose
+
+qiime metadata tabulate \
+	--m-input-file ${WD_path}/LSU_dada2_stats.qza \
+	--o-visualization ${WD_path}/LSU_dada2_stats.qzv
+
+qiime feature-table summarize \
+	--i-table ${WD_path}/LSU_dada2_table.qza \
+	--o-visualization ${WD_path}/LSU_dada2_table.qzv
+
+qiime feature-table tabulate-seqs \
+	--i-data ${WD_path}/LSU_dada2_repseqs.qza \
+	--o-visualization ${WD_path}/LSU_dada2_repseqs.qzv
+########################################################################
+
+#exports ASV table and rep sequences
+########################################################################
+#!/bin/bash
+#SBATCH -o slurm-%j-ExportQIIME.out
+#SBATCH -c 1
+#SBATCH --partition=shared 
+#SBATCH -A BIO230020
+#SBATCH --export=ALL
+#SBATCH -t 1:00:00
+
+module load biocontainers
+module load qiime2
+WD_path=/anvil/scratch/x-jnash12/PAMB1
+
+qiime tools export \
+  --input-path ${WD_path}/LSU_dada2_table.qza \
+  --output-path ${WD_path}/QIIME_exported_files
+
+biom convert -i ${WD_path}/QIIME_exported_files/feature-table.biom -o ${WD_path}/QIIME_exported_files/LSU_dada2_table.tsv --to-tsv
+
+qiime tools export \
+  --input-path ${WD_path}/LSU_dada2_repseqs.qza \
+  --output-path ${WD_path}/QIIME_exported_files
+
+mv ${WD_path}/QIIME_exported_files/dna-sequences.fasta ${WD_path}/QIIME_exported_files/LSU_Dada2_repseqs.fasta
+########################################################################
+
+#Runs RDP classifier on Dada2 rep seqs
+########################################################################
+#!/bin/bash
+#SBATCH -o slurm-%j-RDP_classify.out
+#SBATCH -c 1
+#SBATCH --partition=shared 
+#SBATCH -A BIO230020
+#SBATCH --export=ALL
+#SBATCH -t 48:00:00
+
+WD_path=/anvil/scratch/x-jnash12/PAMB1
+
+java -Xmx1g -jar /anvil/scratch/x-jnash12/PAMB1/rdp_classifier_2.14/dist/classifier.jar \
+	-f fixrank \
+	-g fungallsu \
+	-o ${WD_path}/LSU_dada2_repseqs_RDPTaxonomy.tsv \
+	${WD_path}/QIIME_exported_files/LSU_Dada2_repseqs.fasta
+
+########################################################################
+
+#creates folder for NCBI nt download
+mkdir ${WD_path}/NCBI_nt_20250228/
+
+#downloads NCBI nt database using QIIME2 plugin
+#query targets Eukaryotic LSU
+########################################################################
+#!/bin/bash
+#SBATCH -o slurm-%j-NCBI_DL.out
+#SBATCH -c 128
+#SBATCH --partition=wholenode
+#SBATCH -A BIO230020
+#SBATCH --export=ALL
+#SBATCH -t 48:00:00
+
+module load biocontainers
+module load qiime2
+WD_path=/anvil/scratch/x-jnash12/PAMB1
+
+qiime rescript get-ncbi-data \
+	--p-query 'txid2759[ORGN] AND (LSU[TITLE] OR 28S[TITLE] OR large ribosomal subunit[TITLE] NOT uncultured[TITLE] NOT unidentified[TITLE] NOT unclassified[TITLE] NOT unverified[TITLE])' \
+	--p-n-jobs 16 \
+	--o-sequences ${WD_path}/NCBI_nt_20250228/nt_seqs.qza \
+	--o-taxonomy ${WD_path}/NCBI_nt_20250228/nt_taxonomy.qza
+
+qiime feature-classifier classify-consensus-blast \
+	--i-query ${WD_path}/LSU_dada2_repseqs.qza \
+	--i-reference-taxonomy ${WD_path}/NCBI_nt_20250228/nt_taxonomy.qza \
+	--i-reference-reads ${WD_path}/NCBI_nt_20250228/nt_seqs.qza \
+	--p-num-threads 0 \
+	--o-classification ${WD_path}/LSU_dada2_repseqs_BLAST_taxonomy.qza \
+	--o-search-results ${WD_path}/LSU_dada2_repseqs_BLAST_hits
+
+qiime tools extract \
+  --input-path ${WD_path}/LSU_dada2_repseqs_BLAST_taxonomy.qza \
+  --output-path ${WD_path}/LSU_dada2_repseqs_BLAST_taxonomy
+
+
+########################################################################
+
+#!/bin/bash
+#SBATCH -o slurm-%j-BLAST_tax.out
+#SBATCH -c 128
+#SBATCH --partition=wholenode
+#SBATCH -A BIO230020
+#SBATCH --export=ALL
+#SBATCH -t 48:00:00
+
+module load biocontainers
+module load qiime2
+WD_path=/anvil/scratch/x-jnash12/PAMB1
+
+qiime feature-classifier classify-consensus-blast \
+	--i-query ${WD_path}/LSU_dada2_repseqs.qza \
+	--i-reference-taxonomy ${WD_path}/NCBI_nt_20250228/nt_taxonomy.qza \
+	--i-reference-reads ${WD_path}/NCBI_nt_20250228/nt_seqs.qza \
+	--p-num-threads 0 \
+	--o-classification ${WD_path}/LSU_dada2_repseqs_BLAST_taxonomy.qza \
+	--o-search-results ${WD_path}/LSU_dada2_repseqs_BLAST_hits.
+
+qiime tools extract \
+  --input-path ${WD_path}/LSU_dada2_repseqs_BLAST_taxonomy.qza \
+  --output-path ${WD_path}/LSU_dada2_repseqs_BLAST_taxonomy
+
+cp ${WD_path}/LSU_dada2_repseqs_BLAST_taxonomy/*/data/taxonomy.tsv ${WD_path}/QIIME_exported_files/LSU_dada2_repseqs_BLAST_taxonomy.tsv
+
