@@ -19,4 +19,9 @@ GuildSumm_wide %>%
   Anova
 
 Colonization_bysample %>%
-  filter(!is.na(Ectomycorrhizal))
+  filter(!is.na(Ectomycorrhizal), Species=="T") %>%
+  ggplot(aes(x=`Arbuscular Mycorrhizal`, y=TotalEndophyte, color=Time)) +
+  geom_point() +
+  geom_smooth(method="lm", se=FALSE) +
+  theme_test() +
+  facet_grid(.~Time, scales="free_x")

@@ -7,6 +7,10 @@ library(tidyverse)
 #has been done prior to running this script
 source("LSU_DataImport.R")
 
+#Makes list of top 5 stable taxa (i.e. do not change through
+#time or by plant sepcies) to plot in heatmap
+StableTaxa=c("Tuber", "Hebeloma", "Ceratobasidium",
+             "Ilyonectria", "Hyaloscypha")
 
 Genus_mat_rare_rel=
   otu_mat_rare_rel %>%
@@ -71,10 +75,10 @@ DiffGenera =
   unique
 
 #filter genus-level otu table to only include significant
-#genera and converts to long format for plotting
+#genera and stable genera and converts to long format for plotting
 Genus_mat_rare_rel_sig=
   Genus_mat_rare_rel %>%
-  select(DiffGenera, sample) %>%
+  select(DiffGenera,StableTaxa, sample) %>%
   gather("Genus", "Abundance", -sample) %>%
   left_join(samples_df) %>%
   filter(sample %in% FilterList)
@@ -103,7 +107,8 @@ Genus_mat_rare_rel_sig_hclust=
 #this somewhat follows the hierarchical clustering, but I made
 #some adjustments for viewability
 Genus_hclust_order=
-  data.frame(Genus=c("Glomus",
+  data.frame(Genus=c(StableTaxa,
+                     "Glomus",
                      "Rhizophagus",
                      "Sphaerosporella",
                      "Tulasnella",
@@ -115,13 +120,13 @@ Genus_hclust_order=
                      "Polyphilus",
                      "Diaporthe",
                      "Mycena"),
-             GenusOrder=seq(1:12))
+             GenusOrder=seq(1:17))
 
 #filter genus-level otu table to only include significant
 #genera and converts to long format for plotting
 #data are scaled by Genus to make pretty heatmap
 Genus_mat_rare_rel_sig_scale = Genus_mat_rare_rel %>%
-  select(DiffGenera, sample) %>%
+  select(DiffGenera, StableTaxa, sample) %>%
   mutate(across(-sample, ~ (.-min(.)) / (max(.) - min(.)))) %>% 
   gather("Genus", "Abundance", -sample) %>%
   left_join(samples_df) %>%
@@ -165,7 +170,7 @@ diffabun_heat=
 #outputs figure as PDF so that it can be 
 #formatted in Adobe Illustrator and cleaned up
 pdf(file="./OutputFigures/DiffAbun_heat.pdf", 
-    width = 11, height = 2.2)
+    width = 11, height = 2.8)
 diffabun_heat
 dev.off()
 

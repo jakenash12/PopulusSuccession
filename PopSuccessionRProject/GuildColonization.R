@@ -21,14 +21,16 @@ GuildSumm=
   otu_mat_rare_rel %>%
   mutate(otu=rownames(.)) %>%
   gather(sample, abundance, -otu) %>%
-  left_join(select(tax_mat_fg, otu, primary_guild)) %>%
+  left_join(select(tax_mat_fg, otu, Genus, primary_guild)) %>%
   mutate(primary_guild=
            case_when(
              primary_guild %in% c("Ectomycorrhizal",
                                   "DSE",
                                   "Arbuscular Mycorrhizal") ~ primary_guild,
              primary_guild=="Endophyte" ~ "Non-DSE Endophyte",
+             Genus=="Ilyonectria" ~ "Non-DSE Endophyte",
              .default="Other")) %>% 
+  select(-Genus) %>%
   mutate(primary_guild = case_when(
     primary_guild %in% c("DSE", "Non-DSE Endophyte") ~ "TotalEndophyte",
     TRUE ~ primary_guild
@@ -91,9 +93,9 @@ Colonization_bysample=
   
 Colonization_means=
   Colonization_bysample %>% 
-  filter(!is.na(Uncolonized)) %>% View
+  filter(!is.na(Uncolonized)) %>% 
   select(-c("Microsclerotia","Endophyte","Stand", "SpeciesTime")) %>% 
-  gather("primary_guild","abundance", -Species, -Time, -SampleID) %>% View
+  gather("primary_guild","abundance", -Species, -Time, -SampleID) %>% 
   group_by(Species,Time, primary_guild) %>% 
   summarise(abundance=mean(abundance)) %>%
   select(Time,Species,primary_guild,abundance) %>%
@@ -167,9 +169,24 @@ Colonization_bysample_7months=
 Colonization_bysample_12months=
   filter(Colonization_bysample, Time=="12Months")
 
+library(lme4)
+
+mod_col_ECM_repeat=lmer(
+  sqrt(Ectomycorrhizal) ~ Species * Time + (1 | SampleID), 
+  Colonization_bysample
+)
+Anova(mod_col_ECM_repeat)
+
 #ECM tests
 mod_col_ECM=lm(sqrt(Ectomycorrhizal)~ Species*Time, Colonization_bysample)
 car::Anova(mod_col_ECM)
+
+#runs test as repeat measures mixed model
+mod_col_ECM_repeat=lmer(
+  sqrt(Ectomycorrhizal) ~ Species * Time + (1 | SampleID), 
+  Colonization_bysample)
+Anova(mod_col_ECM_repeat)
+
 
 pairwise.wilcox.test(Colonization_bysample$Ectomycorrhizal,
                      Colonization_bysample$SpeciesTime, p.adjust.method = "fdr")
@@ -186,6 +203,13 @@ car::Anova(mod_col_ECM12)
 #AM tests
 mod_col_AM=lm(sqrt(`Arbuscular Mycorrhizal`)~ Species*Time, Colonization_bysample)
 car::Anova(mod_col_AM)
+
+#runs test as repeat measures mixed model
+mod_col_AM_repeat=lmer(
+  sqrt(`Arbuscular Mycorrhizal`) ~ Species * Time + (1 | SampleID), 
+  Colonization_bysample)
+Anova(mod_col_AM_repeat)
+
 
 pairwise.wilcox.test(Colonization_bysample$`Arbuscular Mycorrhizal`,
                      Colonization_bysample$SpeciesTime, p.adjust.method = "fdr")
@@ -204,6 +228,11 @@ car::Anova(mod_col_AM12)
 mod_col_En=lm(sqrt(TotalEndophyte)~ Species*Time, Colonization_bysample)
 car::Anova(mod_col_En)
 
+mod_col_En_repeat=lmer(
+  sqrt(TotalEndophyte) ~ Species * Time + (1 | SampleID), 
+  Colonization_bysample)
+Anova(mod_col_En_repeat)
+
 pairwise.wilcox.test(Colonization_bysample$TotalEndophyte,
                      Colonization_bysample$SpeciesTime, p.adjust.method = "fdr")
 
@@ -217,6 +246,22 @@ car::Anova(mod_col_En7)
 mod_col_En12=lm(sqrt(TotalEndophyte)~ Species, Colonization_bysample_12months)
 car::Anova(mod_col_En12)
 
+##Uncolonized tests
+mod_col_Uncol_repeat=lmer(
+  sqrt(Uncolonized) ~ Species * Time + (1 | SampleID), 
+  Colonization_bysample)
+Anova(mod_col_Uncol_repeat)
+
+mod_col_Uncol7=lm(sqrt(Uncolonized)~ Species, Colonization_bysample_7months)
+car::Anova(mod_col_En7)
+
+mod_col_Uncol12=lm(sqrt(Uncolonized)~ Species, Colonization_bysample_12months)
+car::Anova(mod_col_En12)
+
+Colonization_bysample %>%
+  filter(Species=="A") %>%
+  lm((Uncolonized)~Time, .) %>%
+  Anova
 
 ########################Sequencing Data###################
 #creates subsets of data by timepoint
@@ -229,6 +274,11 @@ GuildSumm_wide_12months=
 #ECM tests
 mod_LSU_ECM=lm(sqrt(Ectomycorrhizal)~ Species*Time, GuildSumm_wide)
 car::Anova(mod_LSU_ECM)
+
+mod_LSU_ECM_repeat=lmer(
+  sqrt(Ectomycorrhizal) ~ Species * Time + (1 | Pot), 
+  GuildSumm_wide)
+Anova(mod_LSU_ECM_repeat)
 
 pairwise.wilcox.test(GuildSumm_wide$Ectomycorrhizal,
                      GuildSumm_wide$SpeciesTime, p.adjust.method = "fdr")
@@ -250,6 +300,11 @@ car::Anova(mod_LSU_ECM12)
 mod_LSU_AM=lm(sqrt(`Arbuscular Mycorrhizal`)~ Species * Time, GuildSumm_wide)
 car::Anova(mod_LSU_AM)
 
+mod_LSU_AM_repeat=lmer(
+  sqrt(`Arbuscular Mycorrhizal`) ~ Species * Time + (1 | Pot), 
+  GuildSumm_wide)
+Anova(mod_LSU_AM_repeat)
+
 pairwise.wilcox.test(GuildSumm_wide$`Arbuscular Mycorrhizal`,
                      GuildSumm_wide$SpeciesTime, p.adjust.method = "fdr")
 
@@ -265,6 +320,11 @@ car::Anova(mod_LSU_AM12)
 #Endophyte tests
 mod_LSU_En=lm(sqrt(TotalEndophyte)~ Species*Time, GuildSumm_wide)
 car::Anova(mod_LSU_En)
+
+mod_LSU_En_repeat=lmer(
+  sqrt(TotalEndophyte) ~ Species * Time + (1 | Pot), 
+  GuildSumm_wide)
+Anova(mod_LSU_En_repeat)
 
 hist(resid(mod_LSU_En))
 shapiro.test(resid(mod_LSU_En))
